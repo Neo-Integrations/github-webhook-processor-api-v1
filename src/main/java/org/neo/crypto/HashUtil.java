@@ -23,7 +23,7 @@ public class HashUtil {
 		}
 
 		public static void main(String [] args) throws Exception {
-		  System.out.println(encode("ydbXthua98RssqV4", null));
+		  System.out.println(encode("2342", null));
 		}
 
 }
