@@ -1,0 +1,4 @@
+%dw 2.0
+
+type auto_9071acdc_f58b_4886_8608_b1887ca5c32d_Output_Variables_defaultBranchName = Any
+

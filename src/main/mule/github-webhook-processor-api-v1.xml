@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:validation="http://www.mulesoft.org/schema/mule/validation" xmlns:java="http://www.mulesoft.org/schema/mule/java"
+	xmlns:crypto="http://www.mulesoft.org/schema/mule/crypto"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:tls="http://www.mulesoft.org/schema/mule/tls" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/crypto http://www.mulesoft.org/schema/mule/crypto/current/mule-crypto.xsd
+http://www.mulesoft.org/schema/mule/java http://www.mulesoft.org/schema/mule/java/current/mule-java.xsd
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+	<tls:context name="TLS_Context" doc:name="TLS Context" doc:id="829a1879-adb4-4aa0-a80a-e376c12f64d3" >
+		<tls:key-store type="jks" path="secrets/githubapp.keystore.jks" alias="githubapp" keyPassword="passw0rd" password="passw0rd" />
+	</tls:context>
+	<http:listener-config name="HTTPS_Listener_config" doc:name="HTTP Listener config" doc:id="c15eb3d6-5a81-45eb-b413-c3d3cc3bd529" basePath="/api">
+		<http:listener-connection protocol="HTTPS" host="0.0.0.0" port="8082" tlsContext="TLS_Context"/>
+	</http:listener-config>
+	<http:request-config name="HTTPS_Request_configuration" doc:name="HTTP Request configuration" doc:id="f87ce949-ef1c-4299-8092-dc33a13a5c8d" >
+		<http:request-connection protocol="HTTPS" host="api.github.com" port="443" />
+	</http:request-config>
+	<flow name="github-webhook-main-flow" doc:id="c7894fb5-9d18-4119-8df3-37e770dca943">
+		<http:listener doc:name="Listener" doc:id="c51c053c-229d-41b6-b90a-033b293dc919" config-ref="HTTPS_Listener_config" path="/github/webhook" allowedMethods="POST">
+			<http:response statusCode="#[vars.statusCode default 201]" />
+		</http:listener>
+		<java:invoke-static method="encode(String, InputStream)" doc:name="Calculate Hash" doc:id="c1945479-50f8-4786-8a33-c218e0f5dd82" class="org.neo.crypto.HashUtil" target="newHash">
+			<java:args><![CDATA[#[{
+	arg0: p('secret.token'),
+	arg1: payload
+}]]]></java:args>
+		</java:invoke-static>
+		<validation:is-true doc:name="Signature Validation" doc:id="132b35fe-553b-44e6-bb16-ceeffe1de790" expression="#[ (&quot;sha256=&quot; ++ trim(vars.newHash)) == trim(attributes.headers['X-Hub-Signature-256'])]">
+			<error-mapping sourceType="VALIDATION:INVALID_BOOLEAN" targetType="APP:AUTH_ERROR" />
+		</validation:is-true>
+		<choice doc:name="Choice" doc:id="e8aa02e5-8b87-42e1-90f3-689d573260f2">
+			<when expression="#[attributes.headers['x-github-event'] == 'create' and payload['ref_type'] == 'branch' and payload['ref'] == 'main']" >
+				<flow-ref doc:name="github-enable-branch-protection-subflow" doc:id="dee4f7b9-7465-4b20-ac7a-de4f819b6836" name="github-enable-branch-protection-subflow" />
+			</when>
+			<otherwise >
+				<logger level="INFO" doc:name="Logger" doc:id="544ca6e3-0448-4aea-879a-82854d202847" message="Ignored"/>
+			</otherwise>
+		</choice>
+		<ee:transform doc:name="Compose Response" doc:id="be87c323-5c22-4947-bdb3-cd6c893f6d70">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	status: "Completed"
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<error-handler>
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="ed8aa710-2efd-48d8-802b-b61a730d9aca" type="APP:AUTH_ERROR">
+				<set-variable value="403" doc:name="Set Variable" doc:id="678b125d-0096-4797-94a9-2c0bd443203b" variableName="statusCode" />
+				<ee:transform doc:name="Transform Message" doc:id="88461e8f-a04c-4dda-8a8e-18658cbcf5ef">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	"status": "Authentcation error"
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+	<sub-flow name="github-enable-branch-protection-subflow" doc:id="75959f50-b255-4e58-bb93-9dfc9fee7389" >
+		<ee:transform doc:name="Transform Message" doc:id="dce82177-4a78-41ae-ba18-7edfc8b1b004" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="subject" ><![CDATA[%dw 2.0
+output application/java
+---
+payload['sender']['login']]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Owner and Repo Name" doc:id="a80cfca9-61ba-43bf-a24b-ee74246cc40b" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="ownerRepo" ><![CDATA[%dw 2.0
+output application/java
+---
+payload['repository']['full_name'] default null]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="branch" doc:id="e3d4a4b3-dfcf-45e4-a3d0-7b8be3897a2a" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="branchName" ><![CDATA[%dw 2.0
+output application/java
+---
+payload['ref'] default null]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<choice doc:name="Choice" doc:id="a4fc9d7e-eeb4-49a3-815c-65c6cde92dcc" >
+			<when expression="#[vars.ownerRepo != null and vars.branchName != null]">
+				<ee:transform doc:name="Update Branch Protection Body" doc:id="bbbfe3d4-473b-4400-92cf-60659deb224f">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "required_status_checks": null,
+    "enforce_admins": null,
+    "required_pull_request_reviews": {
+        "dismissal_restrictions": {},
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": true,
+        "required_approving_review_count": 2
+    },
+    "allow_force_pushes": false,
+    "restrictions": null
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+				<http:request method="PUT" doc:name="Enable Branch protection" doc:id="b707d2f7-57d0-4801-80f5-b0ddd582c553" config-ref="HTTPS_Request_configuration" path="#['/repos/' ++ vars.ownerRepo ++ '/branches/'++ vars.branchName  ++'/protection']">
+			<http:headers><![CDATA[#[output application/java
+---
+{
+	"Authorization" : "token " ++ p('personal.token'),
+	"Content-Type": "application/json"
+}]]]></http:headers>
+		</http:request>
+				<ee:transform doc:name="GitHub Create Issue Body" doc:id="6f0ddc5b-29b7-4c3d-9222-f50219c11f53">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "title": "Branch Protection Enabled",
+    "body": "The main brach has been protected using standard policy @" ++ vars.subject
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+				<http:request method="POST" doc:name="Create Github Issue" doc:id="44beb750-b7b8-4581-b09d-c33bb6ea80eb" config-ref="HTTPS_Request_configuration" path="#['/repos/' ++ vars.ownerRepo ++ '/issues']">
+			<http:headers><![CDATA[#[output application/java
+---
+{
+	"Authorization" : "token " ++ p('personal.token'),
+	"Content-Type": "application/json"
+}]]]></http:headers>
+		</http:request>
+				<logger level="INFO" doc:name="Log Protection Success" doc:id="b9fe4a14-7bc6-4011-bea7-a570b7a04d99" message="Branch Protection Enabled" />
+			</when>
+			<otherwise >
+				<logger level="INFO" doc:name="Logger" doc:id="822ea5e3-a227-49d2-bbf1-d30502026b66" message="Branch Protection did not happen"/>
+			</otherwise>
+		</choice>
+	</sub-flow>
+</mule>
