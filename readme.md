@@ -1,6 +1,6 @@
 # GitHub Webhook Processor
 
-## Summery and Scope
+## Summary and Scope
 
 This is a simple demo application which shows how to react to the GitHub webhook events. For the simplicity I have kept the application as minimum as possible to demonstrate only the functionality. Please note, there are quite few areas should be improved before making this application as enterprise grade. Some of the improvements I can think of are:
  - <b>API Specification creation:</b> There is no API specification for now as my intention is to show the process rather than the documentation.
